@@ -1,4 +1,5 @@
-﻿using Microsoft.UI.Xaml;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
@@ -6,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using PE32Explorer.PE32;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -35,16 +37,42 @@ namespace PE32Explorer
             this.InitializeComponent();
         }
 
+        private IServiceProvider? serviceProvider;
+
+        public static IServiceProvider Services
+        {
+            get
+            {
+                IServiceProvider serviceProvider = ((App)Application.Current).serviceProvider
+                    ?? throw new InvalidOperationException("The service provider is not initialized");
+                return serviceProvider;
+            }
+        }
+
         /// <summary>
         /// Invoked when the application is launched.
         /// </summary>
         /// <param name="args">Details about the launch request and process.</param>
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            if (this.serviceProvider is null)
+            {
+                serviceProvider = App.ConfigureServices();
+            }
             m_window = new MainWindow();
             m_window.Activate();
         }
 
-        private Window m_window;
+        private static IServiceProvider ConfigureServices()
+        {
+            var provider = new ServiceCollection()
+                .AddLogging()
+                .AddTransient<PE32Parser>()
+                .BuildServiceProvider(true);
+
+            return provider;
+        }
+
+        private Window? m_window;
     }
 }
