@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using PE32Explorer.PE32;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -46,8 +47,8 @@ namespace PE32Explorer
         {
             try
             {
-                using var inputFile = File.OpenRead(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3.exe");
-                var pe32File = await parser.ReadPE32File(inputFile, CancellationToken.None);
+                var buf = await File.ReadAllBytesAsync(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3.exe");
+                var pe32File = parser.ReadPE32File(buf);
                 using var outputFile = File.OpenWrite(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3_patched.exe");
                 await parser.WritePE32File(pe32File, outputFile, CancellationToken.None);
             }

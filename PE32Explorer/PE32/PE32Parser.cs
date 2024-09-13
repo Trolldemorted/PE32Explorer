@@ -1,6 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
 using PE32Explorer.PE32.Model;
+using PE32Explorer.Util;
 using System;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -8,6 +11,8 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
+using Windows.Storage.Streams;
 
 namespace PE32Explorer.PE32;
 
@@ -21,12 +26,12 @@ internal class PE32Parser
     }
 
     #region Read
-    public async Task<PE32File> ReadPE32File(Stream inputStream, CancellationToken cancelToken)
+    public PE32File ReadPE32File(ReadOnlySpan<byte> input)
     {
         this.logger.LogDebug("Parsing PE32 File");
-        var dosHeader = await DOSHeader.Parse(inputStream, cancelToken);
-        var dosStub = await DOSStub.Parse(dosHeader.e_lfanew, inputStream, cancelToken);
-        var imageNtHeaders32 = await IMAGE_NT_HEADERS32.Parse(inputStream, cancelToken);
+        var dosHeader = this.ReadDOSHeader(ref input);
+        var dosStub = this.ReadDOSStub(dosHeader.e_lfanew, ref input);
+        var imageNtHeaders32 = this.ReadImageNtHeaders32(ref input);
         Debug.WriteLine($"{imageNtHeaders32.FileHeader}");
         Debug.WriteLine($"{imageNtHeaders32.OptionalHeader}");
         var importDirectory = imageNtHeaders32.OptionalHeader!.Directories[1];
@@ -34,14 +39,86 @@ internal class PE32Parser
         var sectionTable = new List<SectionHeader>();
         for (var i = 0; i < imageNtHeaders32.FileHeader.NumberOfSections; i++)
         {
-            var section = await SectionHeader.Parse(inputStream, cancelToken);
+            var section = this.ReadSectionHeader(ref input);
             Debug.WriteLine($"VirtualAddress: {section.VirtualAddress:X}");
             sectionTable.Add(section);
         }
 
-        using var data = new MemoryStream();
-        await inputStream.CopyToAsync(data, cancelToken);
-        return new PE32File(dosHeader, dosStub, imageNtHeaders32, sectionTable, data.ToArray());
+        return new PE32File(dosHeader, dosStub, imageNtHeaders32, sectionTable, input.ToArray());
+    }
+
+    public DOSHeader ReadDOSHeader(ref ReadOnlySpan<byte> input)
+    {
+        this.logger.LogDebug("Read DOS Header");
+        return new DOSHeader(input.ReadBytes(DOSHeader.StructSize));
+    }
+
+    public DOSStub ReadDOSStub(int e_lfanew, ref ReadOnlySpan<byte> input)
+    {
+        this.logger.LogDebug("Read DOS Stub");
+        var size = e_lfanew - DOSHeader.StructSize;
+        return new DOSStub(input.ReadBytes(size));
+    }
+
+    public IMAGE_NT_HEADERS32 ReadImageNtHeaders32(ref ReadOnlySpan<byte> input)
+    {
+        var signature = input.ReadUInt32LE();
+        var fileHeader = this.ReadImageFileHeader(ref input);
+        var optionalHeader = this.ReadImageOptionalHeader32(fileHeader.SizeOfOptionalHeader, ref input);
+        return new IMAGE_NT_HEADERS32(signature, fileHeader, optionalHeader);
+    }
+
+    public IMAGE_FILE_HEADER ReadImageFileHeader(ref ReadOnlySpan<byte> input)
+    {
+        byte[] fileHeaderData = input.ReadBytes(0x14);
+        return new IMAGE_FILE_HEADER(fileHeaderData);
+    }
+
+    public IMAGE_OPTIONAL_HEADER32? ReadImageOptionalHeader32(int size, ref ReadOnlySpan<byte> input)
+    {
+        if (size == 0)
+        {
+            return null;
+        }
+
+        var optionalHeaderData = input.ReadBytes(size);
+        var numberOfRvaAndSizes = BitConverter.ToUInt32(optionalHeaderData.AsSpan(0x5C, 4));
+
+        var directories = new List<IMAGE_DATA_DIRECTORY>();
+        var dataDirectoryData = optionalHeaderData[0x60..];
+        for (var i = 0; i < numberOfRvaAndSizes; i++)
+        {
+            directories.Add(IMAGE_DATA_DIRECTORY.Parse(dataDirectoryData));
+            dataDirectoryData = dataDirectoryData[IMAGE_DATA_DIRECTORY.StructSize..];
+        }
+
+        return new IMAGE_OPTIONAL_HEADER32(optionalHeaderData, numberOfRvaAndSizes, directories);
+    }
+
+    public SectionHeader ReadSectionHeader(ref ReadOnlySpan<byte> input)
+    {
+        byte[] name = input.ReadBytes(0x08);
+        uint virtualSize = input.ReadUInt32LE();
+        uint virtualAddress = input.ReadUInt32LE();
+        uint sizeOfRawData = input.ReadUInt32LE();
+        uint pointerToRawData = input.ReadUInt32LE();
+        uint pointerToRelocations = input.ReadUInt32LE();
+        uint pointerToLinenumbers = input.ReadUInt32LE();
+        ushort numberOfRelocations = input.ReadUInt16LE();
+        ushort numberOfLinenumbers = input.ReadUInt16LE();
+        uint characteristics = input.ReadUInt32LE();
+
+        return new SectionHeader(
+            name,
+            virtualSize,
+            virtualAddress,
+            sizeOfRawData,
+            pointerToRawData,
+            pointerToRelocations,
+            pointerToLinenumbers,
+            numberOfRelocations,
+            numberOfLinenumbers,
+            characteristics);
     }
     #endregion
 
@@ -49,16 +126,16 @@ internal class PE32Parser
     public async Task WritePE32File(PE32File pe32File, Stream outputStream, CancellationToken cancelToken)
     {
         this.logger.LogDebug("Write PE32 File");
-        await outputStream.WriteAsync(pe32File.DOSHeader.Data, cancelToken);
-        await outputStream.WriteAsync(pe32File.DOSStub.Data, cancelToken);
+        await outputStream.WriteAsync(pe32File.DOSHeader.Data, cancelToken); //TODO properly reflect changes
+        await outputStream.WriteAsync(pe32File.DOSStub.Data, cancelToken); //TODO properly reflect changes
         await this.WriteImageNtHeaders32(pe32File.NtHeaders32, outputStream, cancelToken);
-        await this.WriteSectionTable(pe32File.SectionTable, outputStream, pe32File.NtHeaders32.FileHeader.FileAlignment, cancelToken);
+        await this.WriteSectionTable(pe32File.SectionTable, outputStream, 0, cancelToken); //TODO proper file alignment
         await outputStream.WriteAsync(pe32File.Data, cancelToken);
     }
 
     public async Task WriteImageNtHeaders32(IMAGE_NT_HEADERS32 ntHeaders32, Stream outputStream, CancellationToken cancelToken)
     {
-        await outputStream.WriteAsync(BitConverter.GetBytes(ntHeaders32.Signature));
+        await outputStream.WriteAsync(BitConverter.GetBytes(ntHeaders32.Signature), cancelToken);
         await this.WriteImageFileHeader(ntHeaders32.FileHeader, outputStream, cancelToken);
         await this.WriteImageOptionalHeader(ntHeaders32.OptionalHeader, outputStream, cancelToken);
     }
