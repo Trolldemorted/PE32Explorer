@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "PE32Explorer (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "PE32Explorer (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
