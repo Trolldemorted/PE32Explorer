@@ -49,6 +49,7 @@ namespace PE32Explorer
             {
                 var buf = await File.ReadAllBytesAsync(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3.exe");
                 var pe32File = parser.ReadPE32File(buf);
+                File.Delete(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3_patched.exe");
                 using var outputFile = File.OpenWrite(@"C:\Program Files (x86)\GOG Galaxy\Games\Patrician 3\Patrician3_patched.exe");
                 await parser.WritePE32File(pe32File, outputFile, CancellationToken.None);
             }

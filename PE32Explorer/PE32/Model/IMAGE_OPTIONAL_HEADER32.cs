@@ -9,4 +9,35 @@ using System.Threading.Tasks;
 
 namespace PE32Explorer.PE32.Model;
 
-internal record IMAGE_OPTIONAL_HEADER32(byte[] Data, uint NumberOfRvaAndSizes, List<IMAGE_DATA_DIRECTORY> Directories);
+internal record IMAGE_OPTIONAL_HEADER32(
+    ushort Magic,
+    byte MajorLinkerVersion,
+    byte MinorLinkerVersion,
+    uint SizeOfCode,
+    uint SizeOfInitializedData,
+    uint SizeOfUninitializedData,
+    uint AddressOfEntryPoint,
+    uint BaseOfCode,
+    uint BaseOfData,
+    uint ImageBase,
+    uint SectionAlignment,
+    uint FileAlignment,
+    ushort MajorOperatingSystemVersion,
+    ushort MinorOperatingSystemVersion,
+    ushort MajorImageVersion,
+    ushort MinorImageVersion,
+    ushort MajorSubsystemVersion,
+    ushort MinorSubsystemVersion,
+    uint Win32VersionValue,
+    uint SizeOfImage,
+    uint SizeOfHeaders,
+    uint CheckSum,
+    ushort Subsystem,
+    ushort DllCharacteristics,
+    uint SizeOfStackReserve,
+    uint SizeOfStackCommit,
+    uint SizeOfHeapReserve,
+    uint SizeOfHeapCommit,
+    uint LoaderFlags,
+    uint NumberOfRvaAndSizes,
+    List<IMAGE_DATA_DIRECTORY> DataDirectory);

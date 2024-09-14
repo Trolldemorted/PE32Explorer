@@ -63,7 +63,7 @@ namespace PE32Explorer
             m_window.Activate();
         }
 
-        private static IServiceProvider ConfigureServices()
+        private static ServiceProvider ConfigureServices()
         {
             var provider = new ServiceCollection()
                 .AddLogging()

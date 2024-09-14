@@ -9,8 +9,11 @@ using System.Threading.Tasks;
 
 namespace PE32Explorer.PE32.Model;
 
-internal record IMAGE_FILE_HEADER(byte[] Data)
-{
-    public int NumberOfSections => BitConverter.ToUInt16(this.Data.AsSpan(2, 2));
-    public int SizeOfOptionalHeader => BitConverter.ToUInt16(this.Data.AsSpan(0x10, 2));
-}
+internal record IMAGE_FILE_HEADER(
+    ushort Machine,
+    ushort NumberOfSections,
+    uint TimeDateStamp,
+    uint PointerToSymbolTable,
+    uint NumberOfSymbols,
+    ushort SizeOfOptionalHeader,
+    ushort Characteristics);

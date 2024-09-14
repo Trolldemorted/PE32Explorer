@@ -19,6 +19,13 @@ internal static class ReadOnlySpanExtensions
         return value;
     }
 
+    public static byte ReadByte(ref this ReadOnlySpan<byte> buffer)
+    {
+        var value = buffer[0];
+        buffer = buffer[1..];
+        return value;
+    }
+
     public static int ReadInt32LE(ref this ReadOnlySpan<byte> buffer)
     {
         var value = BinaryPrimitives.ReadInt32LittleEndian(buffer);
