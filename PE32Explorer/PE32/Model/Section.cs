@@ -8,8 +8,9 @@ namespace PE32Explorer.PE32.Model;
 
 record Section
 {
-    public Section(byte[] data, SectionHeader header) => (Data, Header) = (data, header);
-
-    public byte[] Data { get; set; }
-    public SectionHeader Header { get; set; }
+    public required string Name { get; set; }
+    public required uint VirtualSize { get; set; }
+    public required uint VirtualAddress { get; set; }
+    public required uint Characteristics { get; set; }
+    public required byte[] Data { get; set; }
 }

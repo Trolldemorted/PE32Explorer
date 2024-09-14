@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,15 +32,15 @@ internal class PE32Parser
         var dosHeader = this.ReadDOSHeader(ref headerInput);
         var dosStub = this.ReadDOSStub(dosHeader.e_lfanew, ref headerInput);
         var imageNtHeaders32 = this.ReadImageNtHeaders32(ref headerInput);
-        Debug.WriteLine($"{imageNtHeaders32.FileHeader}");
-        Debug.WriteLine($"{imageNtHeaders32.OptionalHeader}");
+        this.logger.LogDebug($"{imageNtHeaders32.FileHeader}");
+        this.logger.LogDebug($"{imageNtHeaders32.OptionalHeader}");
         var importDirectory = imageNtHeaders32.OptionalHeader!.DataDirectory[1];
-        Debug.WriteLine($"importDirectory: {importDirectory.VirtualAddress:x}");
+        this.logger.LogDebug($"importDirectory: {importDirectory.VirtualAddress:x}");
         var sectionTable = new List<SectionHeader>();
         for (var i = 0; i < imageNtHeaders32.FileHeader.NumberOfSections; i++)
         {
             var sectionHeader = this.ReadSectionHeader(ref headerInput);
-            Debug.WriteLine(
+            this.logger.LogDebug(
                 $"Section {Encoding.UTF8.GetString(sectionHeader.Name).TrimEnd('\0')}:" +
                 $" virtual={sectionHeader.VirtualAddress:X}-{sectionHeader.VirtualAddress + sectionHeader.VirtualSize:X}" +
                 $" file={sectionHeader.PointerToRawData:X}-{sectionHeader.PointerToRawData + sectionHeader.SizeOfRawData:X}" +
@@ -213,7 +214,7 @@ internal class PE32Parser
             Name = name,
             VirtualSize = virtualSize,
             VirtualAddress = virtualAddress,
-            SizeOfRawData = sizeOfRawData,
+            SizeOfRawData = sizeOfRawData, 
             PointerToRawData = pointerToRawData,
             PointerToRelocations = pointerToRelocations,
             PointerToLinenumbers = pointerToLinenumbers,
@@ -226,7 +227,14 @@ internal class PE32Parser
     public Section ReadSectionData(SectionHeader header, ref ReadOnlySpan<byte> input)
     {
         var data = input.Slice((int)header.PointerToRawData, (int)header.SizeOfRawData).ToArray();
-        return new Section(data, header);
+        return new Section()
+        {
+            Name = Encoding.UTF8.GetString(header.Name).TrimEnd('\0'),
+            VirtualSize = header.VirtualSize,
+            VirtualAddress = header.VirtualAddress,
+            Characteristics = header.Characteristics,
+            Data = data,
+        };
     }
     #endregion
 
@@ -234,29 +242,31 @@ internal class PE32Parser
     public async Task WritePE32File(PE32File pe32File, Stream outputStream, CancellationToken cancelToken)
     {
         this.logger.LogDebug("Writing PE32 File");
-        await outputStream.WriteAsync(pe32File.DOSHeader.Data, cancelToken); //TODO properly reflect changes
-        await outputStream.WriteAsync(pe32File.DOSStub.Data, cancelToken); //TODO properly reflect changes
-        pe32File.NtHeaders32.OptionalHeader.SizeOfImage += 0x10000;
-        pe32File.NtHeaders32.FileHeader.NumberOfSections += 1;
-        await this.WriteImageNtHeaders32(pe32File.NtHeaders32, outputStream, cancelToken);
-        pe32File.Sections.Add(new Section(new byte[0x1000], new SectionHeader()
+
+        // Make our changes
+        pe32File.Sections.Add(new Section()
         {
-            Name = Encoding.UTF8.GetBytes(".mod"),
+            Name = ".mod",
             VirtualSize = 0x10000,
             VirtualAddress = MathUtil.RoundUp(0x2F86D4, pe32File.NtHeaders32.OptionalHeader!.SectionAlignment),
-            SizeOfRawData = 0x1000,
-            PointerToRawData = 0x00, //0x2D4000 - 0x1000,
-            PointerToRelocations = 0x0,
-            PointerToLinenumbers = 0x0,
-            NumberOfRelocations = 0x0,
-            NumberOfLinenumbers = 0x0,
             Characteristics = 0xC0000040,
-        }
-        ));
-        this.FixSectionTable(pe32File.Sections, (uint)outputStream.Position, pe32File.NtHeaders32.OptionalHeader!.FileAlignment);
+            Data = new byte[0x1000],
+        });
+
+        // Write DOS header
+        await outputStream.WriteAsync(pe32File.DOSHeader.Data, cancelToken); //TODO properly reflect changes
+        await outputStream.WriteAsync(pe32File.DOSStub.Data, cancelToken); //TODO properly reflect changes
+
+        // Write PE32 header
+        var pe32Position = outputStream.Position;
+        pe32File.NtHeaders32.FileHeader.NumberOfSections = (ushort)pe32File.Sections.Count;
+        var calculatedSizeOfImage = (uint)(pe32File.Sections.Sum(e => MathUtil.RoundUp(e.VirtualSize, 4096)) + MathUtil.RoundUp(pe32File.Sections.Count * 40, 4096));
+        pe32File.NtHeaders32.OptionalHeader.SizeOfImage = calculatedSizeOfImage;
+        await this.WriteImageNtHeaders32(pe32File.NtHeaders32, outputStream, cancelToken);
+
+        // Write sections
         await this.WriteSectionTable(pe32File.Sections, outputStream, pe32File.NtHeaders32.OptionalHeader!.SectionAlignment, pe32File.NtHeaders32.OptionalHeader!.FileAlignment, cancelToken);
         await this.WriteSectionData(pe32File.Sections, outputStream, pe32File.NtHeaders32.OptionalHeader!.FileAlignment, cancelToken);
-        //TODO write bonus data?
     }
 
     public async Task WriteImageNtHeaders32(IMAGE_NT_HEADERS32 ntHeaders32, Stream outputStream, CancellationToken cancelToken)
@@ -330,33 +340,44 @@ internal class PE32Parser
     public async Task WriteSectionTable(List<Section> sections, Stream outputStream, uint sectionAlignment, uint fileAlignment, CancellationToken cancelToken)
     {
         this.logger.LogDebug("Writing section table to 0x{:X}", outputStream.Position);
-        var filePos = MathUtil.RoundUp(outputStream.Position, fileAlignment);
+        var filePos = (uint)(outputStream.Position + sections.Count * 40);
         foreach (var section in sections)
         {
-            this.logger.LogDebug("Writing section {:X}", section);
-            // TODO: Validate/Enforce SizeOfRawData, PointerToRawData being a multiple of FileAlignment
-            if (section.Header.SizeOfRawData % fileAlignment != 0)
+            // Calculate filePos
+            filePos = MathUtil.RoundUp(filePos, fileAlignment);
+
+            this.logger.LogDebug("Writing section {:X} pointing to 0x{:X}", section.Name, filePos);
+
+            // Build name
+            var name = new byte[8];
+            Encoding.UTF8.GetBytes(section.Name).CopyTo(name.AsSpan());
+
+            // Sanity checks
+            if (section.Data.Length % fileAlignment != 0)
             {
                 throw new InvalidOperationException();
             }
-            if (section.Header.PointerToRawData % fileAlignment != 0)
+            if (filePos % fileAlignment != 0)
             {
                 throw new InvalidOperationException();
             }
-            if (section.Header.VirtualAddress % sectionAlignment != 0)
+            if (section.VirtualAddress % sectionAlignment != 0)
             {
                 throw new InvalidOperationException();
             }
-            await outputStream.WriteAsync(section.Header.Name, cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.VirtualSize), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.VirtualAddress), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.SizeOfRawData), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.PointerToRawData), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.PointerToRelocations), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.PointerToLinenumbers), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.NumberOfRelocations), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.NumberOfLinenumbers), cancelToken);
-            await outputStream.WriteAsync(BitConverter.GetBytes(section.Header.Characteristics), cancelToken);
+
+            await outputStream.WriteAsync(name, cancelToken);
+            await outputStream.WriteAsync(BitConverter.GetBytes(section.VirtualSize), cancelToken);
+            await outputStream.WriteAsync(BitConverter.GetBytes(section.VirtualAddress), cancelToken);
+            await outputStream.WriteAsync(BitConverter.GetBytes(section.Data.Length), cancelToken); // SizeOfRawData
+            await outputStream.WriteAsync(BitConverter.GetBytes(filePos), cancelToken); // PointerToRawData
+            await outputStream.WriteAsync(BitConverter.GetBytes((uint)1), cancelToken); // PointerToRelocations
+            await outputStream.WriteAsync(BitConverter.GetBytes((uint)2), cancelToken); // PointerToLinenumbers
+            await outputStream.WriteAsync(BitConverter.GetBytes((ushort)3), cancelToken); // NumberOfRelocations
+            await outputStream.WriteAsync(BitConverter.GetBytes((ushort)4), cancelToken); // NumberOfLinenumbers
+            await outputStream.WriteAsync(BitConverter.GetBytes(section.Characteristics), cancelToken);
+
+            filePos += (uint)section.Data.Length;
         }
     }
 
@@ -373,39 +394,6 @@ internal class PE32Parser
             paddingSize = Util.MathUtil.RoundUp(outputStream.Position, fileAlignment) - outputStream.Position;
             padding = new byte[paddingSize];
             await outputStream.WriteAsync(padding, cancelToken);
-        }
-    }
-    #endregion
-
-    #region Consistency
-    public void FixSectionTable(List<Section> sections, uint filePos, uint fileAlignment)
-    {
-        foreach (var section in sections)
-        {
-            // Ensure name is 8 bytes
-            if (section.Header.Name.Length != 8)
-            {
-                var oldName = section.Header.Name;
-                section.Header.Name = new byte[8];
-                oldName.CopyTo(section.Header.Name.AsSpan());
-            }
-
-            //TODO properly handle relocs and line numbers
-            if (section.Header.NumberOfRelocations > 0)
-            {
-                throw new NotImplementedException();
-            }
-            if (section.Header.NumberOfLinenumbers > 0)
-            {
-                throw new NotImplementedException();
-            }
-
-            // Update SizeOfRawData and PointerToRawData
-            filePos = MathUtil.RoundUp(filePos, fileAlignment);
-            var length = (uint)section.Data.Length;
-            section.Header.SizeOfRawData = length;
-            section.Header.PointerToRawData = filePos;
-            filePos += length;
         }
     }
     #endregion
