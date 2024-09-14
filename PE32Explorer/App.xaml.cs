@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -66,7 +67,11 @@ namespace PE32Explorer
         private static ServiceProvider ConfigureServices()
         {
             var provider = new ServiceCollection()
-                .AddLogging()
+                .AddLogging(e =>
+                {
+                    e.SetMinimumLevel(LogLevel.Debug);
+                    e.AddDebug();
+                })
                 .AddTransient<PE32Parser>()
                 .BuildServiceProvider(true);
 

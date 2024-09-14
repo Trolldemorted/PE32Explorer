@@ -10,5 +10,4 @@ internal record PE32File(
     DOSHeader DOSHeader,
     DOSStub DOSStub,
     IMAGE_NT_HEADERS32 NtHeaders32,
-    List<SectionHeader> SectionTable,
-    byte[] Data);
+    List<Section> Sections);
