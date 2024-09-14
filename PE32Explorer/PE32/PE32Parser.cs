@@ -77,7 +77,12 @@ internal class PE32Parser
         var signature = input.ReadUInt32LE();
         var fileHeader = this.ReadImageFileHeader(ref input);
         var optionalHeader = this.ReadImageOptionalHeader32(fileHeader.SizeOfOptionalHeader, ref input);
-        return new IMAGE_NT_HEADERS32(signature, fileHeader, optionalHeader!);
+        return new IMAGE_NT_HEADERS32()
+        {
+            Signature = signature,
+            FileHeader = fileHeader,
+            OptionalHeader = optionalHeader!
+        };
     }
 
     public IMAGE_FILE_HEADER ReadImageFileHeader(ref ReadOnlySpan<byte> input)
@@ -89,14 +94,16 @@ internal class PE32Parser
         uint numberOfSymbols = input.ReadUInt32LE();
         ushort sizeOfOptionalHeader = input.ReadUInt16LE();
         ushort characteristics = input.ReadUInt16LE();
-        return new IMAGE_FILE_HEADER(
-            machine,
-            numberOfSections,
-            timeDateStamp,
-            pointerToSymbolTable,
-            numberOfSymbols,
-            sizeOfOptionalHeader,
-            characteristics);
+        return new IMAGE_FILE_HEADER()
+        {
+            Machine = machine,
+            NumberOfSections = numberOfSections,
+            TimeDateStamp = timeDateStamp,
+            PointerToSymbolTable = pointerToSymbolTable,
+            NumberOfSymbols = numberOfSymbols,
+            SizeOfOptionalHeader = sizeOfOptionalHeader,
+            Characteristics = characteristics
+        };
     }
 
     public IMAGE_OPTIONAL_HEADER32? ReadImageOptionalHeader32(int size, ref ReadOnlySpan<byte> input)
@@ -375,8 +382,7 @@ internal class PE32Parser
     {
         foreach (var section in sections)
         {
-            filePos = MathUtil.RoundUp(filePos, fileAlignment);
-            var length = (uint)section.Data.Length;
+            // Ensure name is 8 bytes
             if (section.Header.Name.Length != 8)
             {
                 var oldName = section.Header.Name;
@@ -393,11 +399,12 @@ internal class PE32Parser
             {
                 throw new NotImplementedException();
             }
-            section.Header = section.Header with
-            {
-                SizeOfRawData = length,
-                PointerToRawData = filePos,
-            };
+
+            // Update SizeOfRawData and PointerToRawData
+            filePos = MathUtil.RoundUp(filePos, fileAlignment);
+            var length = (uint)section.Data.Length;
+            section.Header.SizeOfRawData = length;
+            section.Header.PointerToRawData = filePos;
             filePos += length;
         }
     }
