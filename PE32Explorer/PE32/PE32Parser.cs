@@ -193,7 +193,11 @@ internal class PE32Parser
         uint virtualAddress = input.ReadUInt32LE();
         uint size = input.ReadUInt32LE();
 
-        return new IMAGE_DATA_DIRECTORY(virtualAddress, size);
+        return new IMAGE_DATA_DIRECTORY()
+        {
+            VirtualAddress = virtualAddress,
+            Size = size,
+        };
     }
 
     public SectionHeader ReadSectionHeader(ref ReadOnlySpan<byte> input)
@@ -214,7 +218,7 @@ internal class PE32Parser
             Name = name,
             VirtualSize = virtualSize,
             VirtualAddress = virtualAddress,
-            SizeOfRawData = sizeOfRawData, 
+            SizeOfRawData = sizeOfRawData,
             PointerToRawData = pointerToRawData,
             PointerToRelocations = pointerToRelocations,
             PointerToLinenumbers = pointerToLinenumbers,
@@ -244,14 +248,21 @@ internal class PE32Parser
         this.logger.LogDebug("Writing PE32 File");
 
         // Make our changes
-        pe32File.Sections.Add(new Section()
+        var dataSize = MathUtil.RoundUp(P3Util.ImportTable.Length, pe32File.NtHeaders32.OptionalHeader.SectionAlignment); //TODO correct alignment?
+        var data = new byte[dataSize];
+        P3Util.ImportTable.CopyTo(data.AsSpan());
+        var customSection = new Section()
         {
             Name = ".mod",
             VirtualSize = 0x10000,
             VirtualAddress = MathUtil.RoundUp(0x2F86D4, pe32File.NtHeaders32.OptionalHeader!.SectionAlignment),
             Characteristics = 0xC0000040,
-            Data = new byte[0x1000],
-        });
+            Data = data,
+        };
+        BitConverter.GetBytes(customSection.VirtualAddress + 320).CopyTo(customSection.Data.AsSpan().Slice(292, 4));
+        pe32File.Sections.Add(customSection);
+        pe32File.NtHeaders32.OptionalHeader.DataDirectory[1].VirtualAddress = customSection.VirtualAddress;
+        pe32File.NtHeaders32.OptionalHeader.DataDirectory[1].Size = (uint)P3Util.ImportTable.Length;
 
         // Write DOS header
         await outputStream.WriteAsync(pe32File.DOSHeader.Data, cancelToken); //TODO properly reflect changes
